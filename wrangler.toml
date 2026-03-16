@@ -1,0 +1,12 @@
+name = "allegro-tracker"
+compatibility_date = "2024-09-23"
+pages_build_output_dir = "public"
+
+[vars]
+LISTING_URL = "https://allegro.pl/oferty-produktu/schar-focaccia-con-rosmarino-3x66-g-200-g-8685e996-6e12-4b5c-8b6d-fb9d94a476f4"
+PRODUCT_NAME = "Schar Focaccia con Rosmarino 200g"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "allegro-prices"
+database_id = "c658ff71-ab53-4e25-bcd5-1af14450848b"

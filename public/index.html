@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Allegro Price Tracker</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, sans-serif; background: #f5f5f5; color: #222; }
+
+  header { background: #ff5a00; color: white; padding: 20px 32px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  header h1 { font-size: 1.4rem; font-weight: 700; }
+  header p  { font-size: 0.85rem; opacity: 0.85; margin-top: 2px; }
+
+  #scrape-btn { background: white; color: #ff5a00; border: none; border-radius: 6px; padding: 10px 20px; font-size: 0.9rem; font-weight: 600; cursor: pointer; transition: opacity .15s; }
+  #scrape-btn:disabled { opacity: .5; cursor: not-allowed; }
+  #scrape-btn:hover:not(:disabled) { opacity: .85; }
+
+  #status { font-size: 0.82rem; margin-top: 6px; min-height: 18px; opacity: 0.9; }
+
+  main { max-width: 960px; margin: 32px auto; padding: 0 16px; }
+
+  .card { background: white; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,.08); margin-bottom: 28px; overflow: hidden; }
+  .card-header { padding: 14px 24px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; }
+  .card-header h2 { font-size: 0.95rem; font-weight: 600; }
+  .card-header span { font-size: 0.8rem; color: #888; }
+
+  .sessions { display: flex; flex-wrap: wrap; gap: 8px; padding: 16px 24px; }
+  .session-btn { padding: 6px 14px; border-radius: 20px; border: 1px solid #ddd; background: white; font-size: 0.82rem; cursor: pointer; color: #555; }
+  .session-btn.active { background: #ff5a00; color: white; border-color: #ff5a00; }
+  .session-btn:hover:not(.active) { border-color: #ff5a00; color: #ff5a00; }
+
+  .charts-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0; }
+  .chart-pane { padding: 20px 24px; }
+  .chart-pane:first-child { border-right: 1px solid #eee; }
+  .chart-pane h3 { font-size: 0.82rem; font-weight: 600; color: #555; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 16px; }
+  .chart-pane canvas { max-height: 220px; }
+  @media (max-width: 600px) { .charts-grid { grid-template-columns: 1fr; } .chart-pane:first-child { border-right: none; border-bottom: 1px solid #eee; } }
+
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; padding: 10px 24px; font-size: 0.72rem; text-transform: uppercase; letter-spacing: .05em; color: #888; background: #fafafa; border-bottom: 1px solid #eee; }
+  td { padding: 11px 24px; font-size: 0.9rem; border-bottom: 1px solid #f0f0f0; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: #fffaf7; }
+
+  .rank { color: #bbb; font-size: 0.8rem; }
+  .price { font-weight: 600; }
+  .best .price { color: #ff5a00; }
+  .ts { color: #aaa; font-size: 0.8rem; }
+  a.offer-link { color: #aaa; font-size: 0.8rem; text-decoration: none; }
+  a.offer-link:hover { color: #ff5a00; }
+
+  .empty { padding: 48px 24px; color: #aaa; text-align: center; font-size: 0.9rem; }
+  .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid rgba(255,90,0,.3); border-top-color: #ff5a00; border-radius: 50%; animation: spin .7s linear infinite; vertical-align: middle; margin-right: 6px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>Allegro Price Tracker</h1>
+    <p id="product-name">Loading…</p>
+  </div>
+  <div style="text-align:right">
+    <button id="scrape-btn" onclick="triggerScrape()">Scrape now</button>
+    <div id="status"></div>
+  </div>
+</header>
+
+<main>
+  <div class="card" id="product-card" style="display:none">
+    <div class="card-header"><h2>Product</h2></div>
+    <div class="sessions" id="product-list"></div>
+  </div>
+
+  <div class="card" id="sessions-card" style="display:none">
+    <div class="card-header"><h2>Scrape sessions</h2><span id="session-count"></span></div>
+    <div class="sessions" id="sessions-list"></div>
+  </div>
+
+  <div class="card" id="charts-card" style="display:none">
+    <div class="charts-grid">
+      <div class="chart-pane">
+        <h3>Median price over time</h3>
+        <canvas id="trend-chart"></canvas>
+      </div>
+      <div class="chart-pane">
+        <h3>Price distribution — current session</h3>
+        <canvas id="dist-chart"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <h2 id="table-title">Prices</h2>
+      <span id="offer-count"></span>
+    </div>
+    <div id="table-container"><div class="empty">No data yet — click <strong>Scrape now</strong> to fetch prices.</div></div>
+  </div>
+</main>
+
+<script>
+  let currentSession = null;
+  let currentProduct = null;
+  let trendChart = null;
+  let distChart = null;
+
+  // ── Chart: median/min/max over time ──────────────────────────────────────
+  async function loadStats(product) {
+    const res = await fetch(`/api/stats?product=${encodeURIComponent(product)}`);
+    const stats = await res.json();
+    if (!Array.isArray(stats) || stats.length === 0) return;
+
+    document.getElementById('charts-card').style.display = '';
+
+    const labels = stats.map(s => s.session.replace('T', ' '));
+    const ctx = document.getElementById('trend-chart').getContext('2d');
+
+    if (trendChart) trendChart.destroy();
+    trendChart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [
+          {
+            label: 'Max',
+            data: stats.map(s => s.max),
+            borderColor: 'rgba(200,200,200,.6)',
+            borderDash: [4, 3],
+            borderWidth: 1,
+            pointRadius: 0,
+            fill: false,
+            tension: 0.3,
+          },
+          {
+            label: 'Median',
+            data: stats.map(s => s.median),
+            borderColor: '#ff5a00',
+            backgroundColor: 'rgba(255,90,0,.08)',
+            borderWidth: 2.5,
+            pointRadius: 4,
+            pointBackgroundColor: '#ff5a00',
+            fill: '+1',
+            tension: 0.3,
+          },
+          {
+            label: 'Min',
+            data: stats.map(s => s.min),
+            borderColor: 'rgba(200,200,200,.6)',
+            borderDash: [4, 3],
+            borderWidth: 1,
+            pointRadius: 0,
+            fill: false,
+            tension: 0.3,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(2)} zł`,
+            },
+          },
+        },
+        scales: {
+          y: {
+            ticks: { callback: v => v.toFixed(2) + ' zł' },
+            grid: { color: '#f0f0f0' },
+          },
+          x: { grid: { display: false } },
+        },
+      },
+    });
+  }
+
+  // ── Chart: price distribution histogram for current session ──────────────
+  function renderDistribution(prices) {
+    const NUM_BINS = 7;
+    const min = Math.min(...prices);
+    const max = Math.max(...prices);
+    const range = max - min || 1;
+    const binSize = range / NUM_BINS;
+
+    const counts = Array(NUM_BINS).fill(0);
+    for (const p of prices) {
+      const idx = Math.min(Math.floor((p - min) / binSize), NUM_BINS - 1);
+      counts[idx]++;
+    }
+    const labels = counts.map((_, i) => (min + i * binSize).toFixed(2) + ' zł');
+
+    const ctx = document.getElementById('dist-chart').getContext('2d');
+    if (distChart) distChart.destroy();
+    distChart = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [{
+          label: 'Sellers',
+          data: counts,
+          backgroundColor: counts.map((_, i) => i === 0 ? 'rgba(255,90,0,.85)' : 'rgba(255,90,0,.3)'),
+          borderRadius: 4,
+        }],
+      },
+      options: {
+        responsive: true,
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: { label: ctx => `${ctx.parsed.y} seller(s)` } },
+        },
+        scales: {
+          y: {
+            ticks: { stepSize: 1, precision: 0 },
+            grid: { color: '#f0f0f0' },
+            title: { display: true, text: 'Sellers' },
+          },
+          x: { grid: { display: false } },
+        },
+      },
+    });
+  }
+
+  // ── Session & product loading ─────────────────────────────────────────────
+  async function loadSessions() {
+    const url = currentProduct ? `/api/sessions?product=${encodeURIComponent(currentProduct)}` : '/api/sessions';
+    const res = await fetch(url);
+    const data = await res.json();
+
+    const products = data.products ?? [];
+    currentProduct = data.active_product ?? products[0] ?? null;
+    document.getElementById('product-name').textContent = currentProduct ?? '';
+
+    const productCard = document.getElementById('product-card');
+    if (products.length > 1) {
+      productCard.style.display = '';
+      document.getElementById('product-list').innerHTML = products.map(p =>
+        `<button class="session-btn${p === currentProduct ? ' active' : ''}"
+                 onclick="selectProduct('${p}', this)">${p}</button>`
+      ).join('');
+    } else {
+      productCard.style.display = 'none';
+    }
+
+    const sessions = data.sessions ?? [];
+    const card = document.getElementById('sessions-card');
+    document.getElementById('session-count').textContent = `${sessions.length} run(s)`;
+
+    if (sessions.length === 0) { card.style.display = 'none'; return; }
+    card.style.display = '';
+
+    document.getElementById('sessions-list').innerHTML = sessions.map((s, i) =>
+      `<button class="session-btn${i === 0 && !currentSession ? ' active' : (s === currentSession ? ' active' : '')}"
+               onclick="selectSession('${s}', this)">${s.replace('T', ' ')}</button>`
+    ).join('');
+
+    if (!currentSession || !sessions.includes(currentSession)) {
+      currentSession = sessions[0];
+    }
+
+    if (currentProduct) loadStats(currentProduct);
+    loadPrices(currentSession);
+  }
+
+  function selectProduct(product, btn) {
+    currentProduct = product;
+    currentSession = null;
+    document.querySelectorAll('#product-list .session-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    loadSessions();
+  }
+
+  function selectSession(session, btn) {
+    currentSession = session;
+    document.querySelectorAll('#sessions-list .session-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    loadPrices(session);
+  }
+
+  async function loadPrices(session) {
+    document.getElementById('table-title').textContent = `Prices — ${session.replace('T', ' ')}`;
+    document.getElementById('table-container').innerHTML = '<div class="empty">Loading…</div>';
+
+    const res = await fetch(`/api/prices?session=${encodeURIComponent(session)}`);
+    const rows = await res.json();
+
+    document.getElementById('offer-count').textContent = `${rows.length} offers`;
+
+    if (!rows.length) {
+      document.getElementById('table-container').innerHTML = '<div class="empty">No offers for this session.</div>';
+      return;
+    }
+
+    renderDistribution(rows.map(r => parseFloat(r.price)));
+
+    document.getElementById('table-container').innerHTML = `
+      <table>
+        <thead>
+          <tr><th>#</th><th>Vendor</th><th>Price (PLN)</th><th>Offer</th><th>Saved at</th></tr>
+        </thead>
+        <tbody>
+          ${rows.map((r, i) => `
+            <tr class="${i === 0 ? 'best' : ''}">
+              <td class="rank">${i + 1}</td>
+              <td>${r.vendor}</td>
+              <td class="price">${parseFloat(r.price).toFixed(2)} zł</td>
+              <td><a class="offer-link" href="https://allegro.pl/oferta/x-${r.offer_id}" target="_blank">${r.offer_id.substring(0, 10)}…</a></td>
+              <td class="ts">${r.timestamp.substring(0, 19).replace('T', ' ')}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>`;
+  }
+
+  async function triggerScrape() {
+    const btn = document.getElementById('scrape-btn');
+    const status = document.getElementById('status');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span>Scraping…';
+    status.textContent = '';
+    try {
+      const res = await fetch('/api/scrape', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        status.textContent = `Error: ${data.error}`;
+      } else {
+        status.textContent = `Saved ${data.saved} offers`;
+        currentSession = null;
+        await loadSessions();
+      }
+    } catch (e) {
+      status.textContent = `Network error: ${e.message}`;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Scrape now';
+    }
+  }
+
+  loadSessions();
+</script>
+</body>
+</html>

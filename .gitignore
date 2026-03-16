@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyc
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# Environment variables and secrets
+config.py
+*.env
+.env
+.dev.vars
+
+# Node
+node_modules/
+
+# Logs
+*.log
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+
+# SQLite database
+*.db
