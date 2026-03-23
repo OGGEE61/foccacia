@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # === CREDENTIALS (from .env) ===
-SCRAPE_DO_TOKEN = os.getenv('SCRAPE_DO_TOKEN', '10242e393a904ff9bbeee5b837bb81897884216fac6')
+SCRAPE_DO_TOKEN = os.getenv('SCRAPE_DO_TOKEN')
 CF_API_KEY      = os.getenv('CF_API_KEY')
 CF_EMAIL        = os.getenv('CF_EMAIL')
 CF_ACCOUNT_ID   = os.getenv('CF_ACCOUNT_ID')
@@ -29,6 +29,12 @@ PRODUCTS = {
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 
+NOISE_VENDOR = {
+    'od', 'Super Sprzedawcy', 'Sponsorowane', 'Firma', 'Nowy', 'Stan', 'Gwarancja',
+    'do koszyka', 'Dodaj do koszyka', 'Kup teraz', 'Obserwuj', 'dodaj do koszyka',
+    'Dostawa', 'Odbiór', 'Raty', 'Ochrona', 'Zwrot',
+}
+
 
 def get_scrape_do_url(url):
     encoded = urllib.parse.quote(url)
@@ -44,13 +50,18 @@ def extract_vendor(article):
     if vendor_link:
         return vendor_link['href'].split('/uzytkownik/')[-1].strip('/')
 
-    # Layout B: element immediately before "Poleca sprzedającego"
+    # Layout B: /sklep/ link (official shops)
+    sklep_link = article.find('a', href=lambda h: h and '/sklep/' in h)
+    if sklep_link:
+        return sklep_link['href'].split('/sklep/')[-1].strip('/')
+
+    # Layout C: element immediately before "Poleca sprzedającego"
     poleca = article.find(lambda t: t.name and t.get_text(strip=True).startswith('Poleca sprzeda'))
     if poleca:
         prev = poleca.find_previous_sibling()
         if prev:
-            text = re.sub(r'^od', '', prev.get_text(strip=True)).strip()
-            if text:
+            text = re.sub(r'^od\s*', '', prev.get_text(strip=True)).strip()
+            if text and text not in NOISE_VENDOR:
                 return text
     return None
 
@@ -76,6 +87,7 @@ def scrape_product(product_name, listing_url, limit=None):
     if limit:
         articles = articles[:limit]
 
+    timestamp = datetime.now().isoformat()
     seen_offer_ids = set()
     offers = []
     for article in articles:
@@ -83,6 +95,10 @@ def scrape_product(product_name, listing_url, limit=None):
         if not link:
             continue
         offer_id = link['href'].split('offerId=')[-1].split('&')[0]
+        if offer_id in seen_offer_ids:
+            continue
+        seen_offer_ids.add(offer_id)
+
         vendor = extract_vendor(article)
         price = extract_price(article)
 
@@ -90,17 +106,13 @@ def scrape_product(product_name, listing_url, limit=None):
             logging.warning(f"Skipping offer {offer_id}: vendor={vendor}, price={price}")
             continue
 
-        if offer_id in seen_offer_ids:
-            continue
-        seen_offer_ids.add(offer_id)
-
         offers.append({
             "offer_id": offer_id,
             "name": product_name,
             "vendor": vendor,
             "price": price,
             "currency": "PLN",
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": timestamp,
         })
         logging.info(f"  {price:.2f} PLN from {vendor}")
 

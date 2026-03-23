@@ -47,7 +47,7 @@ wrangler d1 execute allegro-prices --file schema.sql --remote
 
 **3. Set the scrape.do token as a secret in Cloudflare Pages dashboard**
 
-Settings → Environment variables → add `SCRAPE_DO_TOKEN` (mark as secret)
+Settings → Environment variables → add `SCRAPE_DO_TOKEN` (mark as secret, **required** — no default fallback)
 
 **4. Connect repo to Cloudflare Pages**
 
@@ -78,6 +78,17 @@ python scrapper.py                   # scrape default product → D1
 python scrapper.py --test            # first 5 offers only
 python scrapper.py --all-products    # scrape all products in PRODUCTS dict
 ```
+
+---
+
+## Vendor extraction
+
+The scraper tries three layouts in order:
+1. `/uzytkownik/` link — regular Allegro users
+2. `/sklep/` link — official shops
+3. Text node before "Poleca sprzedającego" — fallback for other layouts
+
+If all three fail, the offer is skipped.
 
 ---
 

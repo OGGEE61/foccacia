@@ -1,5 +1,7 @@
 const NOISE = new Set([
   'od', 'Super Sprzedawcy', 'Sponsorowane', 'Firma', 'Nowy', 'Stan', 'Gwarancja', '|',
+  'do koszyka', 'Dodaj do koszyka', 'Kup teraz', 'Obserwuj', 'dodaj do koszyka',
+  'Dostawa', 'Odbiór', 'Raty', 'Ochrona', 'Zwrot',
 ]);
 
 function getScrapeDoUrl(token, url) {
@@ -19,17 +21,22 @@ function extractOfferId(articleHtml) {
 }
 
 function extractVendor(articleHtml) {
-  // Layout A: /uzytkownik/ link — most reliable
-  const linkMatch = articleHtml.match(/href="[^"]*\/uzytkownik\/([^"/?#\s]+)"/);
-  if (linkMatch) return linkMatch[1];
+  // Layout A: /uzytkownik/ link
+  const uzytMatch = articleHtml.match(/href="[^"]*\/uzytkownik\/([^"/?#\s]+)"/);
+  if (uzytMatch) return decodeURIComponent(uzytMatch[1]);
 
-  // Layout B: last meaningful text node before "Poleca sprzedającego"
-  const beforePoleca = articleHtml.split(/Poleca sprzeda/)[0];
-  if (!beforePoleca) return null;
+  // Layout B: /sklep/ link (official shops)
+  const sklepMatch = articleHtml.match(/href="[^"]*\/sklep\/([^"/?#\s]+)"/);
+  if (sklepMatch) return decodeURIComponent(sklepMatch[1]);
+
+  // Layout C: text node before "Poleca sprzedającego"
+  const parts = articleHtml.split(/Poleca sprzeda/);
+  if (parts.length < 2) return null;
+  const beforePoleca = parts[0];
 
   const candidates = [...beforePoleca.matchAll(/>([^<]{2,60})</g)]
     .map(m => m[1].trim())
-    .filter(t => t && !NOISE.has(t) && !/^\d/.test(t));
+    .filter(t => t && !NOISE.has(t) && !/^\d/.test(t) && !/^[A-Z]{1,3}$/.test(t));
 
   return candidates.at(-1) ?? null;
 }
@@ -60,11 +67,13 @@ export async function onRequestPost({ env }) {
   const articles = extractArticles(html);
   const timestamp = new Date().toISOString();
   const stmts = [];
+  const seen = new Set();
   let skipped = 0;
 
   for (const article of articles) {
     const offerId = extractOfferId(article);
-    if (!offerId) continue;
+    if (!offerId || seen.has(offerId)) continue;
+    seen.add(offerId);
 
     const vendor = extractVendor(article);
     const price = extractPrice(article);
